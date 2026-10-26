@@ -1,0 +1,6 @@
+{
+  "phrasal_verbs": ["set up", "carry on", "go through"],
+  "marketing_adjectives": ["best-in-class", "next-gen"],
+  "synonym_groups": [["centre", "hub", "warehouse"], ["ticket", "issue", "card"]],
+  "avoid_terms": {"utilise": "use", "DC": "centre", "leverage": "use"}
+}

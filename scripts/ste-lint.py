@@ -10,6 +10,8 @@ Usage:
     echo "text" | ste-lint.py [--json]
     ste-lint.py --baseline 5 FILE      # pass unless hard violations exceed 5
     ste-lint.py --disable passive-voice,present-perfect FILE
+    ste-lint.py --config vocab.json FILE   # project vocabulary (default: nearest .ste-lint.json)
+    ste-lint.py --compare ORIGINAL REWRITE # also report facts and hedges the rewrite lost
     ste-lint.py --selftest
 
 Exit 1 when hard ("advisory-free") violations exceed the baseline (default 0).
@@ -25,6 +27,11 @@ import os
 import re
 import sys
 import tempfile
+
+# Sibling modules: locate them from this file, so `python -I` still finds them.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import ste_compare  # noqa: E402
+import ste_config  # noqa: E402
 
 # ponytail: regex heuristics, not a parser. No noun-cluster rule — needs POS
 # tagging to avoid constant false positives; add spaCy-backed rule if ever needed.
@@ -44,7 +51,9 @@ RULES = [
      re.compile(r";"),
      "STE bans the semicolon (Rule 8.1). Split into separate sentences."),
     ("phrasal-verb", "advisory-free",
-     re.compile(r"\b(spin(?:ning|s)? up|spun up|reach(?:ing|es|ed)? out|div(?:e|es|ing|ed) into|dove into|kick(?:ing|s|ed)? off|circl(?:e|es|ing|ed) back|touch(?:ing|es|ed)? base)\b", re.I),
+     re.compile(r"\b(spin(?:ning|s)? up|spun up|reach(?:ing|es|ed)? out|div(?:e|es|ing|ed) into|dove into|kick(?:ing|s|ed)? off|circl(?:e|es|ing|ed) back|touch(?:ing|es|ed)? base|"
+                r"figur(?:e|es|ed|ing) out|f(?:ind|inds|inding|ound) out|look(?:s|ed|ing)? into|"
+                r"c(?:ome|omes|oming|ame) up with|end(?:s|ed|ing)? up|point(?:s|ed|ing)? out)\b", re.I),
      "Soft phrasal verb. Use the single plain verb (start, contact, read, begin)."),
     ("marketing-adjective", "advisory-free",
      re.compile(r"\b(seamless(?:ly)?|robust(?:ly)?|cutting-edge|effortless(?:ly)?|blazing[- ]fast|world-class|state-of-the-art|game-chang(?:ing|er))\b", re.I),
@@ -115,7 +124,41 @@ DOTTED_ABBREVIATION = re.compile(r"(?:[a-z]\.){2,}", re.I)
 
 
 def _word_re(base):
-    return re.compile(r"\b" + base + r"(?:s|es|ed|d|ing)?\b", re.I)
+    return re.compile(r"\b" + re.escape(base) + r"(?:s|es|ed|d|ing)?\b", re.I)
+
+
+def _blank_front_matter(text):
+    """Blank a leading YAML front-matter block, keeping its line count.
+
+    Front matter is metadata, not prose. The block opens with "---" on the
+    first line and closes with "---" or "..." on a later line. Without a
+    closing line the text has no front matter.
+    """
+    lines = text.split("\n")
+    if not lines or lines[0].rstrip() != "---":
+        return text
+    for index in range(1, len(lines)):
+        if lines[index].rstrip() in ("---", "..."):
+            return "\n" * index + "\n" + "\n".join(lines[index + 1:])
+    return text
+
+
+def _config_rules(config):
+    """Turn a project vocabulary into extra rules in the RULES shape."""
+    rules = []
+    phrasal = ste_config.phrasal_pattern(config["phrasal_verbs"])
+    if phrasal:
+        rules.append(("phrasal-verb", "advisory-free", phrasal,
+                      "Project phrasal verb. Use the single plain verb."))
+    marketing = ste_config.word_list_pattern(config["marketing_adjectives"])
+    if marketing:
+        rules.append(("marketing-adjective", "advisory-free", marketing,
+                      "Project marketing adjective. Delete, or replace with a measurement."))
+    for term, replacement, pattern in ste_config.avoid_patterns(config["avoid_terms"]):
+        message = (f"Project vocabulary: use '{replacement}', not '{term}'." if replacement
+                   else f"Project vocabulary: do not use '{term}'.")
+        rules.append(("avoid-term", "advisory-free", pattern, message))
+    return rules
 
 
 def _count_words(text):
@@ -339,7 +382,11 @@ def _dangling_conjunction_findings(text, filename):
     return findings
 
 
-def lint(text, filename="<stdin>"):
+def lint(text, filename="<stdin>", config=None):
+    config = config or ste_config.EMPTY_CONFIG
+    rules = RULES + _config_rules(config)
+    synonym_groups = SYNONYM_GROUPS + list(config["synonym_groups"])
+    text = _blank_front_matter(text)
     findings = []
     words_total = 0
     in_fence = False
@@ -398,7 +445,7 @@ def lint(text, filename="<stdin>"):
         for segment, source_column in segments:
             line = _mask_inline_code(segment)
             words_total += len(line.split())
-            for rule_id, level, pattern, msg in RULES:
+            for rule_id, level, pattern, msg in rules:
                 for m in pattern.finditer(line):
                     if rule_id == "present-perfect" and MODAL_PERFECT_PREFIX.search(
                         line[:m.start()]
@@ -408,7 +455,7 @@ def lint(text, filename="<stdin>"):
                                      "col": source_column + m.start() + 1,
                                      "rule": rule_id, "level": level,
                                      "match": m.group(0), "message": msg})
-            for gi, group in enumerate(SYNONYM_GROUPS):
+            for gi, group in enumerate(synonym_groups):
                 for base in group:
                     if (gi, base) in seen_synonyms:
                         continue
@@ -430,7 +477,7 @@ def lint(text, filename="<stdin>"):
             flush()
     flush()
     # synonym rotation: flag each member after the first, at its first occurrence
-    for gi, group in enumerate(SYNONYM_GROUPS):
+    for gi, group in enumerate(synonym_groups):
         present = [(seen_synonyms[(gi, b)], b) for b in group if (gi, b) in seen_synonyms]
         if len(present) > 1:
             present.sort()  # document order
@@ -719,11 +766,63 @@ def selftest():
         else:
             raise AssertionError(bad)
     assert _rule_list("passive-voice,present-perfect") == {"passive-voice", "present-perfect"}
+    # YAML front matter is metadata: blanked, but line numbers stay true
+    findings, words_total = lint("---\ntitle: a; b\ntags: [x]\n---\nUse a; b.")
+    assert [(f["rule"], f["line"]) for f in findings] == [("semicolon", 5)], findings
+    assert words_total == 3, words_total
+    findings, _ = lint("---\nnot closed; so prose")
+    assert any(f["rule"] == "semicolon" for f in findings), findings
+    findings, _ = lint("Text.\n---\nmore; text")
+    assert any(f["rule"] == "semicolon" for f in findings), findings
+    # the added common phrasal verbs, with irregular forms
+    for text in ("We found out why.", "Look into the log.", "She came up with a fix.",
+                 "It ended up empty.", "He pointed out the bug.", "Figure out the cause."):
+        findings, _ = lint(text)
+        assert any(f["rule"] == "phrasal-verb" for f in findings), text
+    findings, _ = lint("Find the log. The end. Point to the file.")
+    assert not any(f["rule"] == "phrasal-verb" for f in findings), findings
+    # project vocabulary
+    config = ste_config.parse_config({
+        "phrasal_verbs": ["set up"], "marketing_adjectives": ["best-in-class"],
+        "synonym_groups": [["centre", "hub"]], "avoid_terms": {"DC": "centre"}})
+    findings, _ = lint("Set up the best-in-class DC. The centre feeds the hub.",
+                       config=config)
+    rules = sorted(f["rule"] for f in findings)
+    assert rules == ["avoid-term", "marketing-adjective", "phrasal-verb",
+                     "synonym-rotation"], rules
+    assert "use 'centre', not 'DC'" in next(
+        f["message"] for f in findings if f["rule"] == "avoid-term")
+    # --compare reports what the rewrite lost
+    with tempfile.TemporaryDirectory() as tmp:
+        original = os.path.join(tmp, "orig.md")
+        rewrite = os.path.join(tmp, "new.md")
+        with open(original, "w", encoding="utf-8") as fh:
+            fh.write("The job may fail on 3 nodes.\n")
+        with open(rewrite, "w", encoding="utf-8") as fh:
+            fh.write("The job fails.\n")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            assert main(["--no-config", "--json", "--compare", original, rewrite]) == 1
+        rules = {f["rule"] for f in json.loads(out.getvalue())["violations"]}
+        assert rules == {"dropped-literal", "modal-changed"}, rules
+        for bad in (["--compare", original, rewrite, rewrite],
+                    ["--config", original, "--no-config", rewrite],
+                    ["--config", original, rewrite]):  # not JSON
+            try:
+                with contextlib.redirect_stderr(io.StringIO()):
+                    main(bad)
+            except SystemExit as e:
+                assert e.code == 2, (bad, e.code)
+            else:
+                raise AssertionError(bad)
+    ste_config.selftest()
+    ste_compare.selftest()
     print("selftest OK")
 
 
 RULE_IDS = {rule_id for rule_id, *_ in RULES} | {
-    "long-sentence", "synonym-rotation", "dangling-conjunction"}
+    "long-sentence", "synonym-rotation", "dangling-conjunction", "avoid-term",
+    "dropped-literal", "dropped-negation", "modal-changed"}
 
 
 def _rule_list(value):
@@ -746,6 +845,27 @@ def _non_negative_int(value):
     return n
 
 
+def _read(parser, path):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read()
+    except OSError as e:
+        parser.error(f"cannot read {path}: {e.strerror}")
+
+
+def _load_config(parser, args):
+    """Return the project vocabulary: --config, else the nearest .ste-lint.json."""
+    if args.no_config:
+        return None
+    path = args.config or ste_config.find_config(os.getcwd())
+    if not path:
+        return None
+    try:
+        return ste_config.load_config(path)
+    except ste_config.ConfigError as e:
+        parser.error(str(e))
+
+
 def main(argv):
     parser = argparse.ArgumentParser(
         prog="ste-lint.py", allow_abbrev=False,
@@ -757,32 +877,40 @@ def main(argv):
                         help="pass unless hard violations exceed N (default 0)")
     parser.add_argument("--disable", type=_rule_list, default=set(), metavar="RULES",
                         help="comma-separated rule IDs to silence")
+    vocabulary = parser.add_mutually_exclusive_group()
+    vocabulary.add_argument("--config", metavar="PATH",
+                            help="project vocabulary JSON (default: nearest .ste-lint.json)")
+    vocabulary.add_argument("--no-config", action="store_true",
+                            help="do not look for a .ste-lint.json")
+    parser.add_argument("--compare", metavar="ORIGINAL",
+                        help="also report what the rewrite (FILE or stdin) lost from ORIGINAL")
     parser.add_argument("--selftest", action="store_true", help="run the built-in tests")
     # intermixed parsing keeps flags valid between file paths
     args = parser.parse_intermixed_args(argv)
     if args.selftest:
         selftest()
         return 0
-    as_json, baseline, disabled, paths = args.json, args.baseline, args.disable, args.paths
+    if args.compare and len(args.paths) > 1:
+        parser.error("--compare takes one rewrite: give one FILE, or use stdin")
+    config = _load_config(parser, args)
 
-    findings, words_total = [], 0
-    if paths:
-        for p in paths:
-            try:
-                with open(p, encoding="utf-8") as fh:
-                    text = fh.read()
-            except OSError as e:
-                parser.error(f"cannot read {p}: {e.strerror}")
-            f, w = lint(text, filename=p)
-            findings.extend(f)
-            words_total += w
+    findings, words_total, texts = [], 0, []
+    if args.paths:
+        texts = [(p, _read(parser, p)) for p in args.paths]
     else:
-        findings, words_total = lint(sys.stdin.read())
+        texts = [("<stdin>", sys.stdin.read())]
+    for name, text in texts:
+        f, w = lint(text, filename=name, config=config)
+        findings.extend(f)
+        words_total += w
+    if args.compare:
+        original = _read(parser, args.compare)
+        findings.extend(ste_compare.compare(original, texts[0][1], filename=args.compare))
 
-    findings = [f for f in findings if f["rule"] not in disabled]
+    findings = [f for f in findings if f["rule"] not in args.disable]
     hard_count = sum(1 for f in findings if f["level"] == "advisory-free")
-    report(findings, words_total, as_json, hard_count, baseline)
-    return 1 if hard_count > baseline else 0
+    report(findings, words_total, args.json, hard_count, args.baseline)
+    return 1 if hard_count > args.baseline else 0
 
 
 if __name__ == "__main__":

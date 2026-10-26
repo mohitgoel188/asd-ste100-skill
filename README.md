@@ -41,6 +41,13 @@ The repo's own prose does not lint clean: the rule tables quote the patterns the
 
 The dangling-conjunction rule checks list markers at the start of a line with zero to three leading spaces and ASCII spaces after the marker. It supports unordered markers `-`, `*`, and `+`, and ordered numeric markers that end in `.` or `)`, such as `1.` or `1)`. It checks indented continuation lines up to the final meaningful line. It does not parse list syntax inside blockquotes, lazy continuation, or full nested-list semantics. A standalone line with four or more leading spaces is not treated as a list marker. Within an active list item, indentation at the computed content column is treated as continuation text. Fence detection follows the linter's existing simple rule: a stripped line beginning with three backticks or three tildes toggles the fence state.
 
+### Fork additions
+
+- **`--compare ORIGINAL REWRITE`** reports what the rewrite lost: numbers, code spans, fenced code lines, URLs, ticket keys such as `DEL-8524`, and identifiers such as `apps/common` or `get_list_display`. It also counts negations and each modal or hedge word, and reports any count that went down. It reports losses only, because a rewrite can add a word such as "not" when it splits a sentence.
+- **Project vocabulary.** The linter reads the nearest `.ste-lint.json`, or the file that `--config PATH` names. The file can add phrasal verbs, marketing adjectives, synonym groups, and terms to avoid with their replacements. A term with a capital letter, such as `DC`, matches case-sensitively. Use `--no-config` to skip the file. See [`examples/ste-lint.example.json`](examples/ste-lint.example.json).
+- **YAML front matter** at the top of a file is metadata. The linter does not lint it.
+- **More phrasal verbs:** figure out, find out, look into, come up with, end up, point out.
+
 The intentionally invalid examples/linter-edge-cases.md file demonstrates incomplete Markdown list items. Run python scripts/ste-lint.py examples/linter-edge-cases.md to confirm that the linter reports the two expected findings. The file is a test fixture and should not be used as compliant STE prose.
 
 It does **not** reproduce ASD's official ~900-word approved dictionary. The standard is free to obtain but not free to redistribute: Issue 9 permits reproduction only with ASD's written authority, or by eight listed categories of organisation that this project does not belong to. This skill applies the underlying *principle* (plainest available word, used the same way every time) rather than checking against a fixed word list. For certified STE-compliant documentation, use the real standard.
