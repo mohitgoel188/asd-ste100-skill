@@ -31,9 +31,9 @@ Ask for the reasoning ("show the diff", "which rules did it break") and it outpu
 
 The structural rules it checks are mechanical — you can point at the word or punctuation mark that breaks each one. The rules that depend on ASD's dictionary are flagged as advisory rather than enforced, and the rules that need taste are left to you.
 
-The linter checks structural patterns only. It does not compare an original text with a rewrite, verify that requirement strength stayed the same, or prove that the rewrite preserved meaning. A zero-violation result means that the configured structural checks found no problems.
+By default the linter checks structural patterns only. With `--compare`, it also reports literals, negations and modal words that the rewrite lost (see Fork additions). It does not prove that the rewrite preserved meaning. A zero-violation result means that the configured checks found no problems.
 
-The deterministic linter checks semicolons, a short list of soft phrasal verbs (spin up, reach out, dive into, kick off, circle back, touch base), nominalizations, marketing adjectives, passive voice, present-perfect forms (including irregular participles such as "has run"), long sentences, synonym rotation, and dangling conjunctions in supported list items. It does not check noun-cluster length (that needs part-of-speech tagging) and it does not know phrasal verbs outside its list, so "take off the panel" passes. It never flags hedges or modality.
+The deterministic linter checks semicolons, a short list of soft phrasal verbs (spin up, reach out, dive into, kick off, circle back, touch base, figure out, find out, look into, come up with, end up, point out) plus any that `.ste-lint.json` adds, nominalizations, marketing adjectives, passive voice, present-perfect forms (including irregular participles such as "has run"), long sentences, synonym rotation, and dangling conjunctions in supported list items. It does not check noun-cluster length (that needs part-of-speech tagging) and it does not know phrasal verbs outside its list, so "take off the panel" passes. It never flags hedges or modality.
 
 For the sentence-length check, a word is a whitespace-separated token with at least one letter or digit. Inline code in single backticks, list markers, blockquote markers, and bare punctuation such as a spaced em dash are not words.
 
@@ -47,6 +47,7 @@ The dangling-conjunction rule checks list markers at the start of a line with ze
 - **Project vocabulary.** The linter reads the nearest `.ste-lint.json`, or the file that `--config PATH` names. The file can add phrasal verbs, marketing adjectives, synonym groups, and terms to avoid with their replacements. A term with a capital letter, such as `DC`, matches case-sensitively. Use `--no-config` to skip the file. See [`examples/ste-lint.example.json`](examples/ste-lint.example.json).
 - **YAML front matter** at the top of a file is metadata. The linter does not lint it.
 - **More phrasal verbs:** figure out, find out, look into, come up with, end up, point out.
+- **Rust port** in [`rust/`](rust/README.md). It has the same rules, options and JSON output, and runs about 5x faster on one note and 8x faster on bulk input. The Python linter stays the reference, and the skill runs it. `rust/parity/parity.py` checks that both linters report the same findings. Build it with `cargo build --release --manifest-path rust/Cargo.toml`.
 
 The intentionally invalid examples/linter-edge-cases.md file demonstrates incomplete Markdown list items. Run python scripts/ste-lint.py examples/linter-edge-cases.md to confirm that the linter reports the two expected findings. The file is a test fixture and should not be used as compliant STE prose.
 
