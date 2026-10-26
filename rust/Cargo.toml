@@ -1,0 +1,16 @@
+[package]
+name = "ste-lint"
+version = "0.1.0"
+edition = "2024"
+description = "Rust port of scripts/ste-lint.py: same rules, same CLI, same JSON"
+license = "MIT"
+
+[dependencies]
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
